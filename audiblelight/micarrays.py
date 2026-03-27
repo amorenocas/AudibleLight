@@ -27,6 +27,7 @@ __all__ = [
     "FOAListener",
     "dynamically_define_micarray",
     "CHANNEL_LAYOUT_TYPES",
+    "SpatialCodecMicArray",
 ]
 
 CHANNEL_LAYOUT_TYPES = ["mic", "foa", "binaural"]
@@ -580,8 +581,53 @@ class Eigenmike64(MicArray):
         return [str(i) for i in range(1, 65)]
 
 
+@dataclass(repr=False, eq=False)
+class SpatialCodecMicArray(MicArray):
+    """
+    8-linear microphone array used in SpatialCodec publication.
+
+    https://ieeexplore.ieee.org/abstract/document/10445853
+    """
+
+    name: str = "spatialcodec"
+    is_spherical: bool = False
+    channel_layout_type: str = "mic"
+
+    @property
+    def coordinates_polar(self) -> np.ndarray:
+        return utils.cartesian_to_polar(self.coordinates_cartesian)
+
+    @property
+    def coordinates_cartesian(self) -> np.ndarray:
+        """The positions of the capsules in Cartesian coordinates, i.e. as meters from the center of the array."""
+        return np.array(
+            [
+                [0, 0.13, 0],
+                [0, 0.11, 0],
+                [0, 0.9, 0],
+                [0, 0.7, 0],
+                [0, -0.7, 0],
+                [0, -0.9, 0],
+                [0, -0.11, 0],
+                [0, -0.13, 0],
+            ]
+        )
+
+    @property
+    def capsule_names(self) -> list[str]:
+        return ["0", "1", "2", "3", "4", "5", "6", "7"]
+
+
 # A list of all mic array objects
-MICARRAY_LIST = [Eigenmike32, Eigenmike64, AmbeoVR, MonoCapsule, Binaural, FOAListener]
+MICARRAY_LIST = [
+    Eigenmike32,
+    Eigenmike64,
+    AmbeoVR,
+    MonoCapsule,
+    Binaural,
+    FOAListener,
+    SpatialCodecMicArray,
+]
 MICARRAY_CLASS_MAPPING = {cls.__name__: cls for cls in MICARRAY_LIST}
 
 

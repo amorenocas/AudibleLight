@@ -20,12 +20,6 @@ from scipy import stats
 from audiblelight import config, custom_types, utils
 from audiblelight.ambience import Ambience
 from audiblelight.augmentation import ALL_EVENT_AUGMENTATIONS, EventAugmentation
-from audiblelight.class_mappings import (
-    ClassMapping,
-    TClassMapping,
-    infer_id_and_label_from_inputs,
-    sanitize_class_mapping,
-)
 from audiblelight.event import Event
 from audiblelight.micarrays import MicArray
 from audiblelight.worldstate import Emitter, WorldState, get_worldstate_from_string
@@ -46,7 +40,6 @@ class Scene:
         sample_rate: Optional[custom_types.Numeric] = config.SAMPLE_RATE,
         fg_path: Optional[Union[str, Path]] = None,
         bg_path: Optional[Union[str, Path]] = None,
-        image_path: Optional[Union[str, Path]] = None,
         allow_duplicate_audios: bool = True,
         allow_same_class_events: bool = True,
         ref_db: Optional[custom_types.Numeric] = config.DEFAULT_REF_DB,
@@ -65,18 +58,6 @@ class Scene:
             ]
         ] = None,
         backend_kwargs: Optional[dict] = None,
-        class_mapping: Optional[Union[TClassMapping, dict, str]] = "DCASE2023Task3",
-        video_fps: Optional[custom_types.Numeric] = config.VIDEO_FPS,
-        video_res: Optional[
-            tuple[custom_types.Numeric, custom_types.Numeric]
-        ] = config.VIDEO_RESOLUTION,
-        video_low_power: Optional[bool] = True,
-        video_overlay_distance_scale_factor: Optional[
-            custom_types.Numeric
-        ] = config.VIDEO_OVERLAY_DISTANCE_SCALE_FACTOR,
-        video_overlay_base_size: Optional[
-            custom_types.Numeric
-        ] = config.VIDEO_OVERLAY_BASE_SIZE,
     ):
         """
         Initializes the Scene with a given duration and mesh.
@@ -113,36 +94,16 @@ class Scene:
                 `augmentations` when calling `Scene.add_event`, i.e. `Scene.add_event(augmentations=3)` will sample
                 3 random augmentations from `event_augmentations` and apply them to the Event.
             backend_kwargs: keyword arguments passed to `audiblelight.WorldState`.
-            class_mapping: a mapping used to map class names to indices, and vice versa. Can be a subclass of
-                `audiblelight.class_mapping.ClassMapping`, `dict`, or `str`. Defaults to DCASE 2023, task 3 mapping
-            video_fps: The number of frames-per-second to use when creating a video, defaults to 10
-            video_res: The resolution of generated video files, defaults to (1920 x 960). Note that height must be
-                exactly half of width for an equirectangular video.
-            video_low_power: Applies a variety of adjustments to improve video performance on weaker hardware.
-            video_overlay_distance_scale_factor: Scales the size of overlaid images depending on proximity to camera.
-                A larger scaling factor means that images closer to the camera will appear smaller, vs. a lower scaling
-                factor. Defaults to 0.1.
-            video_overlay_base_size: The base size of overlaid images on the video, independent of distance. Defaults
-                to 0.5.
-
         """
 
         # Set attributes passed in by the user
-        self.duration = utils.sanitise_positive_number(duration)
-        # Raise a warning when the duration is very short.
-        if self.duration < config.WARN_WHEN_SCENE_DURATION_BELOW:
-            logger.warning(
-                f"The duration for this Scene is very short ({duration:.2f} seconds). "
-                f"You may encounter issues with Events overlapping or being truncated to fit the "
-                f"duration of the Scene. It is recommended to increase the duration to at least "
-                f"{config.WARN_WHEN_SCENE_DURATION_BELOW} seconds."
-            )
+        self.duration = duration
         self.ref_db = self._sanitise_ref_db(ref_db)
         # Time overlaps (we could include a space overlaps parameter too)
-        self.max_overlap = utils.sanitise_positive_number(max_overlap, cast_to=int)
+        self.max_overlap = max_overlap
 
         # Set sample rate correctly
-        self.sample_rate = utils.sanitise_positive_number(sample_rate, cast_to=int)
+        self.sample_rate = sample_rate
 
         # Instantiate the `WorldState` object, which loads the mesh and sets up the ray-tracing engine
         if backend_kwargs is None:
@@ -218,14 +179,6 @@ class Scene:
         )
         self.bg_audios = self._introspect_input_directories(self.bg_paths)
 
-        # Parse image directory and obtain all valid image files
-        self.image_paths = (
-            self._parse_input_directories(image_path) if image_path is not None else []
-        )
-        self.fg_images = self._introspect_input_directories(
-            self.image_paths, exts=custom_types.IMAGE_EXTS
-        )
-
         # If False, we'll ensure that all randomly sampled event/ambience audio is unique when sampling
         self.allow_duplicate_audios = allow_duplicate_audios
 
@@ -254,58 +207,6 @@ class Scene:
         #  Note again that this is a dictionary to support multiple microphones
         self.acoustic_image = OrderedDict()
         self.acoustic_image_json = OrderedDict()
-
-        # Parse class mapping
-        self.class_mapping = sanitize_class_mapping(class_mapping)
-
-        # Video stuff
-        self.video_fps = utils.sanitise_positive_number(video_fps, cast_to=int)
-        self.video_res = self._sanitise_video_res(video_res)
-        self.video_low_power = video_low_power
-        self.video_overlay_base_size = utils.sanitise_positive_number(
-            video_overlay_base_size
-        )
-        self.video_overlay_distance_scaling_factor = utils.sanitise_positive_number(
-            video_overlay_distance_scale_factor
-        )
-
-    @staticmethod
-    def _sanitise_video_res(video_res: Any) -> list[int]:
-        """
-        Validate video resolution, and raise errors as required
-        """
-
-        if not isinstance(video_res, (tuple, list, set, np.ndarray)):
-            raise TypeError(
-                "Expected video_res to be an iterable, but got type {}".format(
-                    type(video_res)
-                )
-            )
-
-        if len(video_res) != 2:
-            raise ValueError(
-                "Expected video_res to contain exactly 2 values, but got {} values".format(
-                    len(video_res)
-                )
-            )
-
-        if not all([v > 0 for v in video_res]):
-            raise ValueError(
-                "Expected all values in video_res to be positive, but got {}".format(
-                    video_res
-                )
-            )
-
-        # For an equirectangular video, height must be width // 2
-        w, h = video_res
-        if not int(h) == int(w // 2):
-            raise ValueError(
-                "Expected height to be exactly half of width for an equirectangular video, but got {} x {}".format(
-                    h, w
-                )
-            )
-
-        return [utils.sanitise_positive_number(vr, cast_to=int) for vr in video_res]
 
     @staticmethod
     def _sanitise_ref_db(ref_db: Any) -> int:
@@ -645,16 +546,6 @@ class Scene:
         Returns:
             bool: True if successful, False otherwise.
         """
-        # Coerce user provided image
-        if event_kwargs["image_filepath"] is not None:
-            image_filepath = utils.sanitise_filepath(event_kwargs["image_filepath"])
-
-            # Run validation checks on image
-            if not str(image_filepath).endswith(custom_types.IMAGE_EXTS):
-                raise ValueError(
-                    f"Image filepath {image_filepath.name} is invalid! "
-                    f"Extension must be one of {', '.join(custom_types.IMAGE_EXTS)}"
-                )
 
         # Grab the alias: this should always be present inside the dictionary
         alias = event_kwargs["alias"]
@@ -673,7 +564,6 @@ class Scene:
         # Pre-resolve all user-specified override values (only done once)
         overrides = {
             "filepath": event_kwargs.get("filepath"),
-            "image_filepath": event_kwargs.get("image_filepath"),
             "scene_start": event_kwargs.get("scene_start"),
             "event_start": event_kwargs.get("event_start"),
             "duration": event_kwargs.get("duration"),
@@ -714,41 +604,8 @@ class Scene:
                         self.scene_start_dist, overrides["scene_start"]
                     ),
                     "snr": utils.sample_distribution(self.snr_dist, overrides["snr"]),
-                    "spatial_velocity": utils.sample_distribution(
-                        self.event_velocity_dist, overrides["spatial_velocity"]
-                    ),
-                    "spatial_resolution": utils.sample_distribution(
-                        self.event_resolution_dist, overrides["spatial_resolution"]
-                    ),
                 }
             )
-
-            # Try and get the class ID and label from the filepath + mapping
-            current_kws["class_id"], current_kws["class_label"] = (
-                infer_id_and_label_from_inputs(
-                    current_kws["class_id"],
-                    current_kws["class_label"],
-                    self.class_mapping,
-                    current_kws["filepath"],
-                )
-            )
-
-            # If we have class labels, no image for this Event, but some images associated with the Scene
-            if all(
-                (
-                    current_kws["class_label"] is not None,
-                    current_kws["image_filepath"] is None,
-                    len(self.fg_images) > 0,
-                )
-            ):
-                # Try and grab a matching image for the class
-                valid_class_images = [
-                    img
-                    for img in self.fg_images
-                    if current_kws["class_label"] == img.parent.stem
-                ]
-                if len(valid_class_images) > 0:
-                    current_kws["image_filepath"] = random.choice(valid_class_images)
 
             # Create the event with the current keywords
             #  Need to strip out arguments that are only valid for adding emitters to the backend
@@ -862,16 +719,6 @@ class Scene:
         if not self.allow_duplicate_audios:
             seen_audios = self._get_used_audios()
             audio_paths = [i for i in audio_paths if i not in seen_audios]
-
-        # If we want to ensure that a single class cannot appear more than once
-        if not self.allow_same_class_events:
-            used_class_ids = self._get_used_class_ids()
-            audio_paths = [
-                ap
-                for ap in audio_paths
-                if self.class_mapping.infer_label_idx_from_filepath(ap)[0]
-                not in used_class_ids
-            ]
 
         # Raise an error when no audio files available
         if len(audio_paths) == 0:
@@ -1096,11 +943,8 @@ class Scene:
                 event_start=event_start,
                 duration=duration,
                 snr=snr,
-                class_id=class_id,
-                class_label=class_label,
                 augmentations=augmentations,
                 max_place_attempts=max_place_attempts,
-                image_filepath=image_filepath,
                 **event_kwargs,
             )
 
@@ -1157,9 +1001,7 @@ class Scene:
         logger.info(f"Event added successfully: {event}")
         return event
 
-    def _validate_user_defined_audio_filepath(
-        self, user_filepath: Path, user_class_id: int
-    ) -> None:
+    def _validate_user_defined_audio_filepath(self, user_filepath: Path) -> None:
         """
         Validates the user defined audio filepath parameter.
         """
@@ -1172,23 +1014,6 @@ class Scene:
                     f"Either increase the number of `fg_paths` in Scene.__init__, "
                     f"choose a different audio file, "
                     f"or set `Scene.allow_duplicate_audios=True`."
-                )
-
-        # If we don't want to allow for duplicate class IDs, check this too
-        if not self.allow_same_class_events:
-            seen_classes = self._get_used_class_ids()
-            # Try and resolve the class ID
-            resolved_id = (
-                self.class_mapping.infer_label_idx_from_filepath(user_filepath)[0]
-                if user_class_id is None
-                else user_class_id
-            )
-            if resolved_id in seen_classes:
-                raise ValueError(
-                    f"Audio file {str(user_filepath.resolve())} uses a class that has"
-                    f" already been added to the Scene ({resolved_id}). "
-                    f"Either choose a different audio file, "
-                    f"or set `Scene.allow_same_class_events=True`."
                 )
 
     def add_event_static(
@@ -1210,10 +1035,7 @@ class Scene:
         event_start: Optional[custom_types.Numeric] = None,
         duration: Optional[custom_types.Numeric] = None,
         snr: Optional[custom_types.Numeric] = None,
-        class_id: Optional[int] = None,
-        class_label: Optional[str] = None,
         max_place_attempts: Optional[custom_types.Numeric] = config.MAX_PLACE_ATTEMPTS,
-        image_filepath: Optional[Union[str, Path]] = None,
         **event_kwargs,
     ) -> Event:
         """
@@ -1268,7 +1090,7 @@ class Scene:
             filepath = utils.sanitise_filepath(filepath)
 
             # Run validation checks on the filepath
-            self._validate_user_defined_audio_filepath(filepath, class_id)
+            self._validate_user_defined_audio_filepath(filepath)
 
         # Convert polar positions to cartesian here
         if polar:
@@ -1290,8 +1112,6 @@ class Scene:
             duration=duration,
             snr=snr,
             sample_rate=self.sample_rate,
-            class_id=class_id,
-            class_label=class_label,
             # No spatial resolution/velocity for static events
             spatial_resolution=None,
             spatial_velocity=None,
@@ -1304,9 +1124,6 @@ class Scene:
             ensure_direct_path=ensure_direct_path,
             keep_existing=True,
             max_place_attempts=max_place_attempts,
-            class_mapping=self.class_mapping,
-            # Image stuff
-            image_filepath=image_filepath,
             **event_kwargs,
         )
 
@@ -1322,436 +1139,6 @@ class Scene:
             )
 
         # Return the event with emitters already registered
-        return self.get_event(alias)
-
-    def add_event_moving(
-        self,
-        filepath: Optional[Union[str, Path]] = None,
-        alias: Optional[str] = None,
-        augmentations: Optional[
-            Union[
-                Iterable[Type[EventAugmentation]],
-                Type[EventAugmentation],
-                custom_types.Numeric,
-            ]
-        ] = None,
-        position: Optional[Union[list, np.ndarray]] = None,
-        mic: Optional[str] = None,
-        polar: Optional[bool] = False,
-        shape: Optional[str] = None,
-        scene_start: Optional[custom_types.Numeric] = None,
-        event_start: Optional[custom_types.Numeric] = None,
-        duration: Optional[custom_types.Numeric] = None,
-        snr: Optional[custom_types.Numeric] = None,
-        class_id: Optional[int] = None,
-        class_label: Optional[str] = None,
-        spatial_resolution: Optional[custom_types.Numeric] = None,
-        spatial_velocity: Optional[custom_types.Numeric] = None,
-        ensure_direct_path: Optional[Union[bool, list, str]] = False,
-        max_place_attempts: Optional[custom_types.Numeric] = config.MAX_PLACE_ATTEMPTS,
-        image_filepath: Optional[Union[str, Path]] = None,
-        **event_kwargs,
-    ) -> Event:
-        """
-        Add a moving event to the foreground with optional overrides.
-
-        Note that the arguments "scene_start", "event_start", "duration", "snr", "spatial_velocity", &
-        "spatial_resolution" will (by default) sample from their respective distributions, provided in `Scene.__init__`.
-        If a numeric value is provided, this will be treated as an override and used instead of random sampling.
-
-        Arguments:
-            filepath: a path to a foreground event to use. If not provided, a foreground event will be sampled from
-                `fg_category_paths`, if this is provided inside `__init__`; otherwise, an error will be raised.
-            alias: the string alias used to index this event inside the `events` dictionary
-            augmentations: augmentation objects to associate with the Event.
-                If a list of EventAugmentation objects or a single EventAugmentation object, these will be passed directly.
-                If a number, this many augmentations will be sampled from either `Scene.event_augmentations`, or a master
-                list of valid augmentations (defined inside `audiblelight.augmentations`)
-                If not provided, EventAugmentations can be registered later by calling `register_augmentations` on the Event.
-            position: Starting point for the event. When not provided, a random point inside the mesh will be chosen.
-            mic: String reference to a microphone inside `self.state.microphones`;
-                when provided, `position` is interpreted as RELATIVE to the center of this microphone
-            polar: When True, expects `position` to be provided in [azimuth, elevation, radius] form; otherwise,
-                units are [x, y, z] in absolute, cartesian terms.
-            scene_start: Time to start the Event within the Scene, in seconds. Must be a positive number.
-            event_start: Time to start the Event audio from, in seconds. Must be a positive number.
-            duration: Time the Event audio lasts in seconds. Must be a positive number.
-            snr: Signal to noise ratio for the audio file with respect to the noise floor
-            class_label: Optional label to use for sound event class.
-                If not provided, will attempt to infer label from filepath using the DCASE sound event classes.
-            class_id: Optional ID to use for sound event class.
-                If not provided, will attempt to infer ID from filepath using the DCASE sound event classes.
-            spatial_velocity: Speed of a moving sound event in metres-per-second
-            spatial_resolution: Resolution of a moving sound event in Hz (i.e., number of IRs created per second)
-            shape: the shape of a moving event trajectory; one of "linear", "semicircular", "random", "sine", "sawtooth"
-            ensure_direct_path: Whether to ensure a direct line exists between the emitter and given microphone(s).
-                If True, will ensure a direct line exists between the emitter and ALL `microphone` objects. If a list of
-                strings, these should correspond to microphone aliases inside `microphones`; a direct line will be
-                ensured with all of these microphones. If False, no direct line is required for a emitter.
-            max_place_attempts (Numeric): the number of times to try and place an Event before giving up.
-            image_filepath: A path to an image file, used when generating visual representations of a scene.
-                Must be provided in order to generate videos from a Scene.
-            event_kwargs: additional keyword arguments passed to Event.__init__
-
-        Returns:
-            the Event object added to the Scene
-        """
-        # Convert polar positions to cartesian here
-        if polar:
-            position = self._coerce_polar_position(position, mic)
-
-        # Get a default alias and a random filepath if these haven't been provided
-        alias = (
-            utils.get_default_alias("event", self.events) if alias is None else alias
-        )
-
-        # Check filepath over
-        if filepath is not None:
-            # Sanitise the filepath (check it exists on disk, etc.)
-            filepath = utils.sanitise_filepath(filepath)
-
-            # Run validation checks on the filepath
-            self._validate_user_defined_audio_filepath(filepath, class_id)
-
-        # Sample N random augmentations from our list, if required
-        if isinstance(augmentations, custom_types.Numeric):
-            augmentations = self._get_n_random_event_augmentations(augmentations)
-
-        # Sample a random shape if not provided
-        if shape is None:
-            shape = random.choice(config.MOVING_EVENT_SHAPES)
-
-        # Set up the kwargs dictionaries for the `define_trajectory` and `Event.__init__` funcs
-        event_kwargs_full = dict(
-            filepath=filepath,
-            alias=alias,
-            scene_start=scene_start,
-            event_start=event_start,
-            duration=duration,
-            snr=snr,
-            # Useful to store the shape of the moving event trajectory
-            shape=shape,
-            sample_rate=self.sample_rate,
-            class_id=class_id,
-            class_label=class_label,
-            spatial_resolution=spatial_resolution,
-            spatial_velocity=spatial_velocity,
-            augmentations=augmentations,
-            starting_position=position,
-            ensure_direct_path=ensure_direct_path,
-            max_place_attempts=max_place_attempts,
-            class_mapping=self.class_mapping,
-            # Image stuff
-            image_filepath=image_filepath,
-            **event_kwargs,
-        )
-
-        # Create the event with required arguments
-        placed = self._try_add_event(**event_kwargs_full)
-
-        # Raise an error if we can't place the event correctly
-        if not placed:
-            raise ValueError(
-                f"Could not place event in the mesh after {config.MAX_PLACE_ATTEMPTS} attempts. "
-                f"Consider increasing the value of `max_overlap` (currently {self.max_overlap}) or the "
-                f"`duration` of the scene (currently {self.duration})."
-            )
-
-        # Return the event with emitters already registered
-        return self.get_event(alias)
-
-    # noinspection PyProtectedMember
-    def _try_add_predefined_event(
-        self,
-        trajectory: Optional[np.ndarray],
-        ensure_direct_path: Optional[bool],
-        max_place_attempts: Optional[custom_types.Numeric],
-        **event_kwargs,
-    ) -> bool:
-        """
-        Tries to add an Event with given kwargs and predefined trajectory.
-
-        The idea here is:
-            - Iterate over ALL valid trajectories associated with the state, or a SINGLE user trajectory
-                - Randomly sample duration, event start, etc. (or use overrides)
-                - Grab spatial resolution + velocity from the trajectory in combination with the duration
-                - If the trajectory is valid (e.g., has path to mic, inbounds with mesh), use it
-                - Otherwise, resample the parameters and try again
-            - If no valid combination for one trajectory, try with the next one
-
-        Returns:
-            bool: True if successful, False otherwise.
-        """
-        # Coerce user provided image
-        if event_kwargs["image_filepath"] is not None:
-            image_filepath = utils.sanitise_filepath(event_kwargs["image_filepath"])
-
-            # Run validation checks on image
-            if not str(image_filepath).endswith(custom_types.IMAGE_EXTS):
-                raise ValueError(
-                    f"Image filepath {image_filepath.name} is invalid! "
-                    f"Extension must be one of {', '.join(custom_types.IMAGE_EXTS)}"
-                )
-
-        # Grab the alias: this should always be present inside the dictionary
-        alias = event_kwargs["alias"]
-
-        # Use only 1 placement attempt if all overrides are present
-        has_overrides = all(
-            k is not None in event_kwargs
-            for k in ("scene_start", "event_start", "duration")
-        )
-        max_place_attempts_per_trajectory = (
-            max_place_attempts if not has_overrides else 1
-        )
-
-        # Use only 1 placement attempt if trajectory provided
-        if trajectory is not None:
-            if not self.state._validate_position(trajectory):
-                raise ValueError("Provided trajectory is invalid")
-            trajectories = [trajectory]
-        else:
-            trajectories = self.state.waypoints
-
-        # Pre-resolve all user-specified override values (only done once)
-        #  Spatial resolution + velocity are defined by trajectory, not user
-        overrides = {
-            "scene_start": event_kwargs.get("scene_start"),
-            "event_start": event_kwargs.get("event_start"),
-            "duration": event_kwargs.get("duration"),
-            "snr": event_kwargs.get("snr"),
-        }
-
-        # Get valid aliases from the input
-        ensure_direct_path_to_mic = self.state._parse_valid_microphone_aliases(
-            ensure_direct_path
-        )
-
-        # Iterate over all the trajectories
-        #  If a user defined trajectory, we will only iterate once
-        #  Otherwise, we iterate over all valid trajectories associated with the state
-        for trajectory_current in trajectories:
-
-            # Compute some statistics based on the duration
-            n_points = trajectory_current.shape[0]
-            start = trajectory_current[0]
-            differences = trajectory_current[1:] - start
-            distances = np.linalg.norm(differences, axis=1)
-            max_distance = distances[np.argmax(distances)]
-
-            # If required, check that a direct path exists to all mic objects from this trajectory
-            for d in ensure_direct_path_to_mic:
-                if not all(
-                    self.state.path_exists_between_points(
-                        t, self.get_microphone(d).coordinates_center
-                    )
-                    for t in trajectory_current
-                ):
-                    continue
-
-            # Iterate a number of times over each trajectory
-            #  This allows us e.g. to try different duration values for a single trajectory
-            for _ in range(max_place_attempts_per_trajectory):
-
-                # Copy once per attempt
-                current_kws = event_kwargs.copy()
-
-                # If we haven't passed in a duration override OR a distribution, default to using the full audio duration
-                if overrides["duration"] is None and self.event_duration_dist is None:
-                    current_kws["duration"] = None
-                # Otherwise, try and sample from the distribution or use the override
-                else:
-                    current_kws["duration"] = utils.sample_distribution(
-                        self.event_duration_dist, overrides["duration"]
-                    )
-
-                # Do the same for event start time
-                if overrides["event_start"] is None and self.event_start_dist is None:
-                    current_kws["event_start"] = None
-                else:
-                    current_kws["event_start"] = utils.sample_distribution(
-                        self.event_start_dist, overrides["event_start"]
-                    )
-
-                # Sample values (with fallback to override if provided)
-                current_kws.update(
-                    {
-                        "scene_start": utils.sample_distribution(
-                            self.scene_start_dist, overrides["scene_start"]
-                        ),
-                        "snr": utils.sample_distribution(
-                            self.snr_dist, overrides["snr"]
-                        ),
-                        "shape": "predefined",
-                    }
-                )
-
-                # Try and get the class ID and label from the filepath + mapping
-                current_kws["class_id"], current_kws["class_label"] = (
-                    infer_id_and_label_from_inputs(
-                        current_kws["class_id"],
-                        current_kws["class_label"],
-                        self.class_mapping,
-                        current_kws["filepath"],
-                    )
-                )
-
-                # If we have class labels, no image for this Event, but some images associated with the Scene
-                if all(
-                    (
-                        current_kws["class_label"] is not None,
-                        current_kws["image_filepath"] is None,
-                        len(self.fg_images) > 0,
-                    )
-                ):
-                    # Try and grab a matching image for the class
-                    valid_class_images = [
-                        img
-                        for img in self.fg_images
-                        if current_kws["class_label"] == img.parent.stem
-                    ]
-                    if len(valid_class_images) > 0:
-                        current_kws["image_filepath"] = random.choice(
-                            valid_class_images
-                        )
-
-                # Create the event with the current keywords
-                current_event = Event(**current_kws)
-
-                # Reject this attempt if overlap would be exceeded
-                if self._would_exceed_temporal_overlap(
-                    current_event.scene_start, current_event.scene_end
-                ):
-                    continue
-
-                # Extract the spatial resolution from the trajectory
-                #  equivalent to number of points in trajectory over duration
-                #  We need the duration sampled for the current iteration here
-                #  So this has to be done inside the second loop
-                spatial_resolution = (
-                    utils.sanitise_positive_number(
-                        n_points / current_event.duration, cast_to=round
-                    )
-                    - 1
-                )
-                current_event.spatial_resolution = spatial_resolution
-
-                # Extract the spatial velocity from the trajectory
-                #  equivalent to total distance travelled over duration
-                spatial_velocity = max_distance / current_event.duration
-                current_event.spatial_velocity = spatial_velocity
-
-                if (
-                    current_event.spatial_velocity > self.event_velocity_dist.max
-                    or current_event.spatial_velocity < self.event_velocity_dist.min
-                ):
-                    continue
-
-                # Store the event and register the emitters with the current trajectory
-                self.state._add_emitters_without_validating(trajectory_current, alias)
-                emitters = self.state.get_emitters(alias)
-                if len(emitters) != len(trajectory_current):
-                    self.clear_event(alias)
-                    raise ValueError(
-                        f"Did not add expected number of emitters into the WorldState "
-                        f"(expected {len(trajectory_current)}, got {len(emitters)})"
-                    )
-                current_event.register_emitters(emitters)
-                self.events[alias] = current_event
-                return True
-
-        return False
-
-    # noinspection PyProtectedMember
-    def add_event_predefined(
-        self,
-        filepath: Optional[Union[str, Path]] = None,
-        trajectory: Optional[np.ndarray] = None,
-        alias: Optional[str] = None,
-        augmentations: Optional[
-            Union[
-                Iterable[Type[EventAugmentation]],
-                Type[EventAugmentation],
-                custom_types.Numeric,
-            ]
-        ] = None,
-        scene_start: Optional[custom_types.Numeric] = None,
-        event_start: Optional[custom_types.Numeric] = None,
-        duration: Optional[custom_types.Numeric] = None,
-        snr: Optional[custom_types.Numeric] = None,
-        class_id: Optional[int] = None,
-        class_label: Optional[str] = None,
-        ensure_direct_path: Optional[Union[bool, list, str]] = False,
-        max_place_attempts: Optional[custom_types.Numeric] = config.MAX_PLACE_ATTEMPTS,
-        image_filepath: Optional[Union[str, Path]] = None,
-    ):
-        """
-        Add a moving event to the foreground that follows a predefined path.
-
-        The spatial velocity and resolution of the event will be inferred from the trajectory itself, in combination
-        with the duration (which may be provided or randomly sampled).
-        """
-        # Get a default alias and a random filepath if these haven't been provided
-        alias = (
-            utils.get_default_alias("event", self.events) if alias is None else alias
-        )
-        filepath = (
-            self._get_random_audio(self.fg_audios)
-            if filepath is None
-            else utils.sanitise_filepath(filepath)
-        )
-
-        # Check filepath over
-        if filepath is not None:
-            # Sanitise the filepath (check it exists on disk, etc.)
-            filepath = utils.sanitise_filepath(filepath)
-
-            # Run validation checks on the filepath
-            self._validate_user_defined_audio_filepath(filepath, class_id)
-
-        # Sample N random augmentations from our list, if required
-        if isinstance(augmentations, custom_types.Numeric):
-            augmentations = self._get_n_random_event_augmentations(augmentations)
-
-        # If no movement trajectory provided, try and sample one from the state
-        if not isinstance(trajectory, np.ndarray) and len(self.state.waypoints) == 0:
-            raise ValueError(
-                "State must have waypoints: did you set `waypoints_json` correctly?"
-            )
-
-        event_kwargs = dict(
-            filepath=filepath,
-            alias=alias,
-            scene_start=scene_start,
-            event_start=event_start,
-            duration=duration,
-            snr=snr,
-            sample_rate=self.sample_rate,
-            class_id=class_id,
-            class_label=class_label,
-            augmentations=augmentations,
-            class_mapping=self.class_mapping,
-            image_filepath=image_filepath,
-        )
-        # Pre-initialise the event with required arguments + register the emitters
-        utils.validate_kwargs(Event.__init__, **event_kwargs)
-        placed = self._try_add_predefined_event(
-            **event_kwargs,
-            trajectory=trajectory,
-            max_place_attempts=max_place_attempts,
-            ensure_direct_path=ensure_direct_path,
-        )
-
-        # Raise an error if we can't place the event correctly
-        if not placed:
-            # No need to clear out any emitters (as in `add_event_static`) because we haven't placed them yet
-            raise ValueError(
-                f"Could not place event in the mesh after {config.MAX_PLACE_ATTEMPTS} attempts. "
-                f"Consider increasing the value of `max_overlap` (currently {self.max_overlap}) or the "
-                f"`duration` of the scene (currently {self.duration})."
-            )
-
-        # Return the event we just created
         return self.get_event(alias)
 
     def _would_exceed_temporal_overlap(
@@ -1821,7 +1208,6 @@ class Scene:
         # Sanitise filepaths: strip out suffixes, we'll add these in later
         audio_path = (output_dir / audio_fname).with_suffix("")
         metadata_path = (output_dir / metadata_fname).with_suffix("")
-        video_path = (output_dir / video_fname).with_suffix("")
 
         # Write the audio output to a separate .wav, one per mic
         if audio:
@@ -1845,12 +1231,6 @@ class Scene:
                     mic_audio.T,
                     int(self.sample_rate),
                 )
-
-        # Generating a video
-        if video:
-            from audiblelight.synthesize import generate_scene_video_from_events
-
-            generate_scene_video_from_events(self, video_path)
 
         # Get the metadata and add the spatial audio format in
         if metadata_json or metadata_dcase:
@@ -2121,9 +1501,6 @@ class Scene:
             ambience={k: a.to_dict() for k, a in self.ambience.items()},
             events={k: e.to_dict() for k, e in self.events.items()},
             state=self.state.to_dict(),
-            class_mapping=(
-                self.class_mapping.to_dict() if self.class_mapping is not None else None
-            ),
         )
 
     @classmethod
@@ -2155,7 +1532,6 @@ class Scene:
             "state",
             "sample_rate",
             "backend",
-            "class_mapping",
         ]:
             if expected not in input_dict:
                 raise KeyError("Missing key: '{}'".format(expected))
@@ -2193,9 +1569,6 @@ class Scene:
         # Instantiate the state, which also creates all the emitters and microphones
         state = WorldState.from_dict(input_dict["state"])
 
-        # Instantiate the class ampping
-        class_mapping = ClassMapping.from_dict(input_dict["class_mapping"])
-
         # Pass the backend directly in when creating the Scene
         instantiated_scene = cls(
             duration=input_dict["duration"],
@@ -2205,7 +1578,6 @@ class Scene:
             bg_path=input_dict["bg_path"],
             ref_db=input_dict["ref_db"],
             max_overlap=input_dict["max_overlap"],
-            class_mapping=class_mapping,
         )
 
         # Instantiate the events by iterating over the list
@@ -2311,15 +1683,6 @@ class Scene:
         Get all ambience objects, as in `self.ambience.values()`
         """
         return list(self.ambience.values())
-
-    def get_class_mapping(self) -> Type[TClassMapping]:
-        """
-        Alias for `ClassMapping.mapping`
-        """
-        if self.class_mapping is not None:
-            return self.class_mapping.to_dict()
-        else:
-            return None
 
     # noinspection PyProtectedMember
     def clear_events(self) -> None:

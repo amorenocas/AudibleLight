@@ -1,0 +1,11 @@
+services:
+  dev:
+    build: 
+      context: .
+    platform: linux/amd64
+    image: audible-light-dev
+    container_name: audible-light-env
+    volumes:
+      - .:/app               # mount your local folder inside container
+      - /Users/iamoreno/HEART/Data/LibriMix/LibriSpeech:/data  # mount local data folder
+    tty: true                # keep terminal open

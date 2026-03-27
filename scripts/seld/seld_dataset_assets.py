@@ -22,8 +22,8 @@ MESHES = {
             "Halfway.glb",
         ],
         "test": ["Helix.glb", "Peacock.glb", "Vails.glb"],
-        "scapes_per_train_mesh": 150,
-        "scapes_per_test_mesh": 100,
+        "scapes_per_train_mesh": 2500,
+        "scapes_per_test_mesh": 250,
     },
     "9B": {
         "train": [
