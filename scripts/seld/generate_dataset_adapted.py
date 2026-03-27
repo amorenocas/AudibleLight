@@ -47,7 +47,7 @@ from scripts.seld.seld_dataset_assets import MESHES
 utils.seed_everything(utils.SEED)
 
 # Filepaths, directories, etc.
-FG_DIR = "/data/train-clean-100"
+FG_DIR = "/data"
 MESH_DIR = utils.get_project_root() / "resources/meshes/gibson"
 OUTPUT_DIR = utils.get_project_root() / "spatial_scenes_dcase_synthetic"
 
@@ -160,7 +160,11 @@ def generate(
         ),
         # Event augmentations will sample from this list
         event_augmentations=use_augmentations,
-        fg_path=Path(FG_DIR),
+        fg_path=(
+            Path(FG_DIR) / "train-clean-100"
+            if split == "train"
+            else Path(FG_DIR) / "test-clean"
+        ),
         max_overlap=max_overlap,
         ref_db=scene_ref_db,
         backend_kwargs=backend_kwargs,
